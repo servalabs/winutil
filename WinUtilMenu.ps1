@@ -62,67 +62,7 @@ function Parse-MultiSelection {
     return ,($indices.ToArray())
 }
 
-function Get-AppCategories {
-    $appsDir = Join-Path $PSScriptRoot 'apps'
-    $names = @()
-    if (Test-Path $appsDir) {
-        $names = Get-ChildItem -Path $appsDir -File | Sort-Object Name | Select-Object -ExpandProperty Name
-    }
-    return ,($names)
-}
-
-function Get-AppCategoryContent {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]
-        $Name
-    )
-    $appsDir = Join-Path $PSScriptRoot 'apps'
-    $localPath = Join-Path $appsDir $Name
-    if (Test-Path $localPath) {
-        return (Get-Content -Path $localPath -Raw)
-    }
-    try {
-        $url = "${script:RemoteAppsBaseUrl}$Name"
-        $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -Method GET -TimeoutSec 30
-        return $resp.Content
-    } catch {
-        return $null
-    }
-}
-
-function Invoke-AppCategory {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]
-        $Name,
-        [Parameter(Mandatory = $true)]
-        [ValidateSet('Install','Update')]
-        [string]
-        $Mode
-    )
-    $content = Get-AppCategoryContent -Name $Name
-    if (-not $content) {
-        Write-Host "No content for category '$Name'." -ForegroundColor Yellow
-        return
-    }
-    $lines = $content -split "`r?`n"
-    foreach ($line in $lines) {
-        $trim = if ($line) { $line.Trim() } else { '' }
-        if ([string]::IsNullOrWhiteSpace($trim)) { continue }
-        if ($trim.StartsWith('#')) { continue }
-        $toRun = $trim
-        if ($Mode -eq 'Update') {
-            $toRun = [System.Text.RegularExpressions.Regex]::Replace($toRun, '^\s*winget\s+install\b', 'winget upgrade', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        }
-        try {
-            Write-Host ">> $toRun" -ForegroundColor DarkGray
-            Invoke-Expression $toRun
-        } catch {
-            Write-Host "Command failed: $toRun" -ForegroundColor Yellow
-        }
-    }
-}
+ 
 
 function Show-MainMenu {
     Clear-Host
@@ -141,7 +81,11 @@ function Invoke-AppInstallsSubmenu {
         Clear-Host
         Write-Host '=== Install Apps ===' -ForegroundColor Cyan
         Write-Host 'U) Upgrade ALL installed apps'
-        $categories = Get-AppCategories
+        $appsDir = Join-Path $PSScriptRoot 'apps'
+        $categories = @()
+        if (Test-Path $appsDir) {
+            $categories = Get-ChildItem -Path $appsDir -File | Sort-Object Name | Select-Object -ExpandProperty Name
+        }
         $i = 1
         foreach ($c in $categories) {
             Write-Host ("{0}) {1}" -f $i, $c)
@@ -180,7 +124,25 @@ function Invoke-AppInstallsSubmenu {
 
         foreach ($cat in $selectedCats) {
             Write-Host ("[{0}] {1}" -f $mode, $cat) -ForegroundColor Green
-            Invoke-AppCategory -Name $cat -Mode $mode
+            $url = "${script:RemoteAppsBaseUrl}$cat"
+            try {
+                $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -Method GET -TimeoutSec 30
+                $scriptText = $resp.Content
+                if ([string]::IsNullOrWhiteSpace($scriptText)) { Write-Host "Empty script for '$cat'" -ForegroundColor Yellow; continue }
+                $lines = $scriptText -split "`r?`n"
+                foreach ($line in $lines) {
+                    $cmd = if ($line) { $line.Trim() } else { '' }
+                    if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
+                    if ($cmd.StartsWith('#')) { continue }
+                    if ($mode -eq 'Update') {
+                        $cmd = [System.Text.RegularExpressions.Regex]::Replace($cmd, '^[\t ]*winget\s+install\b', 'winget upgrade', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                    }
+                    Write-Host ">> $cmd" -ForegroundColor DarkGray
+                    try { Invoke-Expression $cmd } catch { Write-Host "Command failed: $cmd" -ForegroundColor Yellow }
+                }
+            } catch {
+                Write-Host ("Failed to fetch/execute '{0}' from {1}: {2}" -f $cat, $url, $_.Exception.Message) -ForegroundColor Yellow
+            }
         }
 
         Write-Host 'Done. Press Enter to continue...'
