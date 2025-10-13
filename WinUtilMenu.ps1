@@ -9,6 +9,9 @@ ${script:RemoteHostsNames} = @(
     'lightburn'
 )
 
+# Remote source for app categories (apps/<categoryName>)
+${script:RemoteAppsBaseUrl} = 'https://raw.githubusercontent.com/servalabs/winutil/refs/heads/main/apps/'
+
 function Assert-IsAdmin {
     $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
@@ -59,6 +62,68 @@ function Parse-MultiSelection {
     return ,($indices.ToArray())
 }
 
+function Get-AppCategories {
+    $appsDir = Join-Path $PSScriptRoot 'apps'
+    $names = @()
+    if (Test-Path $appsDir) {
+        $names = Get-ChildItem -Path $appsDir -File | Sort-Object Name | Select-Object -ExpandProperty Name
+    }
+    return ,($names)
+}
+
+function Get-AppCategoryContent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]
+        $Name
+    )
+    $appsDir = Join-Path $PSScriptRoot 'apps'
+    $localPath = Join-Path $appsDir $Name
+    if (Test-Path $localPath) {
+        return (Get-Content -Path $localPath -Raw)
+    }
+    try {
+        $url = "${script:RemoteAppsBaseUrl}$Name"
+        $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -Method GET -TimeoutSec 30
+        return $resp.Content
+    } catch {
+        return $null
+    }
+}
+
+function Invoke-AppCategory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]
+        $Name,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Install','Update')]
+        [string]
+        $Mode
+    )
+    $content = Get-AppCategoryContent -Name $Name
+    if (-not $content) {
+        Write-Host "No content for category '$Name'." -ForegroundColor Yellow
+        return
+    }
+    $lines = $content -split "`r?`n"
+    foreach ($line in $lines) {
+        $trim = if ($line) { $line.Trim() } else { '' }
+        if ([string]::IsNullOrWhiteSpace($trim)) { continue }
+        if ($trim.StartsWith('#')) { continue }
+        $toRun = $trim
+        if ($Mode -eq 'Update') {
+            $toRun = [System.Text.RegularExpressions.Regex]::Replace($toRun, '^\s*winget\s+install\b', 'winget upgrade', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+        try {
+            Write-Host ">> $toRun" -ForegroundColor DarkGray
+            Invoke-Expression $toRun
+        } catch {
+            Write-Host "Command failed: $toRun" -ForegroundColor Yellow
+        }
+    }
+}
+
 function Show-MainMenu {
     Clear-Host
     Write-Host '=== Windows Utility Menu ===' -ForegroundColor Cyan
@@ -72,33 +137,17 @@ function Show-MainMenu {
 
 function Invoke-AppInstallsSubmenu {
     Assert-IsAdmin
-
-    $categories = @(
-        'PostInstall',
-        'Base',
-        'MidUser',
-        'PowerUser',
-        'DevTools',
-        'PrivacySuite',
-        'MonitoringBenchmark',
-        'Dependencies',
-        'MultimediaStreaming',
-        'FileTransferImaging',
-        'NotesWriting',
-        'UtilitiesOther',
-        'OnHold'
-    )
-
     while ($true) {
         Clear-Host
         Write-Host '=== Install Apps ===' -ForegroundColor Cyan
         Write-Host 'U) Upgrade ALL installed apps'
+        $categories = Get-AppCategories
         $i = 1
         foreach ($c in $categories) {
             Write-Host ("{0}) {1}" -f $i, $c)
             $i++
         }
-        Write-Host ("A) Install ALL categories")
+        Write-Host 'A) Run ALL categories'
         Write-Host '0) Back'
         Write-Host -NoNewline 'Enter number(s) comma-separated, A for all, U to upgrade all, or 0 to back: '
         $raw = Read-Host
@@ -121,207 +170,17 @@ function Invoke-AppInstallsSubmenu {
             foreach ($idx in $sel) { $selectedCats += $categories[$idx - 1] }
         }
 
-            $mode = $null
-            while ($null -eq $mode) {
-                Write-Host 'Choose mode: 1) Install  2) Update existing [Enter=Install]' -ForegroundColor Cyan
-                $m = Read-Host
-                if ([string]::IsNullOrWhiteSpace($m) -or $m -eq '1') { $mode = 'Install' }
-                elseif ($m -eq '2') { $mode = 'Update' }
-            }
+        $mode = $null
+        while ($null -eq $mode) {
+            Write-Host 'Choose mode: 1) Install  2) Update existing [Enter=Install]' -ForegroundColor Cyan
+            $m = Read-Host
+            if ([string]::IsNullOrWhiteSpace($m) -or $m -eq '1') { $mode = 'Install' }
+            elseif ($m -eq '2') { $mode = 'Update' }
+        }
 
         foreach ($cat in $selectedCats) {
             Write-Host ("[{0}] {1}" -f $mode, $cat) -ForegroundColor Green
-            switch ($cat) {
-                'PostInstall' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id IObit.DriverBooster --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id IObit.DriverBooster --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'Base' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Nilesoft.Shell --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Giorgiotani.Peazip --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id DuongDieuPhap.ImageGlass --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Starpine.Screenbox --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Nilesoft.Shell --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Giorgiotani.Peazip --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id DuongDieuPhap.ImageGlass --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Starpine.Screenbox --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'MidUser' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Bopsoft.Listary --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id PDFgear.PDFgear --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id AntibodySoftware.WizTree --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id CodeSector.TeraCopy --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Vivaldi.Vivaldi --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id SoftDeluxe.FreeDownloadManager --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Klocman.BulkCrapUninstaller --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id flux.flux --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Bopsoft.Listary --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id PDFgear.PDFgear --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id AntibodySoftware.WizTree --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id CodeSector.TeraCopy --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Vivaldi.Vivaldi --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id SoftDeluxe.FreeDownloadManager --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Klocman.BulkCrapUninstaller --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id flux.flux --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'PowerUser' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Microsoft.PowerToys --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id ShareX.ShareX --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Espanso.Espanso --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id AutoHotkey.AutoHotkey --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id QL-Win.QuickLook --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id hluk.CopyQ --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Microsoft.PowerToys --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id ShareX.ShareX --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Espanso.Espanso --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id AutoHotkey.AutoHotkey --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id QL-Win.QuickLook --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id hluk.CopyQ --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'DevTools' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id GitHub.GitHubDesktop --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id PostgreSQL.pgAdmin --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Anysphere.Cursor --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Microsoft.WindowsTerminal --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id OpenJS.NodeJS --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Microsoft.PowerShell --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Git.Git --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Oracle.JDK.25 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Python.Python.3.10 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Python.Launcher --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Mobatek.MobaXterm --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id junegunn.fzf --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id BurntSushi.ripgrep.MSVC --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id GitHub.GitHubDesktop --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id PostgreSQL.pgAdmin --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Anysphere.Cursor --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Microsoft.WindowsTerminal --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id OpenJS.NodeJS --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Microsoft.PowerShell --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Git.Git --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Oracle.JDK.25 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Python.Python.3.10 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Python.Launcher --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Mobatek.MobaXterm --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id junegunn.fzf --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id BurntSushi.ripgrep.MSVC --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'PrivacySuite' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Proton.ProtonDrive --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id IDRIX.VeraCrypt --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Proton.ProtonPass --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Proton.ProtonMail --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Proton.ProtonVPN --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Tailscale.Tailscale --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id OpenWhisperSystems.Signal --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Cryptomator.Cryptomator --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Proton.ProtonDrive --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id IDRIX.VeraCrypt --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Proton.ProtonPass --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Proton.ProtonMail --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Proton.ProtonVPN --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Tailscale.Tailscale --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id OpenWhisperSystems.Signal --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Cryptomator.Cryptomator --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'MonitoringBenchmark' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id REALiX.HWiNFO --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id CrystalDewWorld.CrystalDiskInfo --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id CrystalDewWorld.CrystalDiskMark --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id WinsiderSS.SystemInformer --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Resplendence.WhoCrashed --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Famatech.AdvancedIPScanner --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id REALiX.HWiNFO --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id CrystalDewWorld.CrystalDiskInfo --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id CrystalDewWorld.CrystalDiskMark --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id WinsiderSS.SystemInformer --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Resplendence.WhoCrashed --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Famatech.AdvancedIPScanner --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'Dependencies' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Microsoft.VCRedist.All --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Microsoft.DotNet.DesktopRuntime.6 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Microsoft.DotNet.DesktopRuntime.8 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Microsoft.DotNet.Runtime.7 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Microsoft.DotNet.Runtime.8 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Microsoft.DotNet.Runtime.9 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Microsoft.VCRedist.All --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Microsoft.DotNet.DesktopRuntime.6 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Microsoft.DotNet.DesktopRuntime.8 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Microsoft.DotNet.Runtime.7 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Microsoft.DotNet.Runtime.8 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Microsoft.DotNet.Runtime.9 --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'MultimediaStreaming' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Stremio.Stremio.Beta --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id flux.flux --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Stremio.Stremio.Beta --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id flux.flux --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'FileTransferImaging' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Google.QuickShare --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id LocalSend.LocalSend --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Google.QuickShare --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id LocalSend.LocalSend --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'NotesWriting' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Obsidian.Obsidian --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id Obsidian.Obsidian --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'UtilitiesOther' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id Nlitesoft.NTLite --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id BillStewart.SyncthingWindowsSetup --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Balena.Etcher --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-        } else {
-                        winget install --id Nlitesoft.NTLite --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id BillStewart.SyncthingWindowsSetup --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Balena.Etcher --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-                'OnHold' {
-                    if ($mode -eq 'Update') {
-                        winget upgrade --id BlastApps.FluentSearch --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget upgrade --id Ablaze.Floorp --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    } else {
-                        winget install --id BlastApps.FluentSearch --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                        winget install --id Ablaze.Floorp --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-                    }
-                }
-            }
+            Invoke-AppCategory -Name $cat -Mode $mode
         }
 
         Write-Host 'Done. Press Enter to continue...'
