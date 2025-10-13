@@ -1,0 +1,7 @@
+winget install --id Microsoft.PowerToys --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id ShareX.ShareX --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Espanso.Espanso --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id AutoHotkey.AutoHotkey --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id QL-Win.QuickLook --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id hluk.CopyQ --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Stremio.Stremio.Beta --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent

@@ -1,0 +1,4 @@
+winget install --id Nilesoft.Shell --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Giorgiotani.Peazip --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id DuongDieuPhap.ImageGlass --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Starpine.Screenbox --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent

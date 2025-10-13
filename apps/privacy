@@ -1,0 +1,8 @@
+winget install --id Proton.ProtonDrive --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id IDRIX.VeraCrypt --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Proton.ProtonPass --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Proton.ProtonMail --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Proton.ProtonVPN --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Tailscale.Tailscale --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id OpenWhisperSystems.Signal --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+winget install --id Cryptomator.Cryptomator --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
