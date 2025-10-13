@@ -1,80 +1,25 @@
 param(
-    [ValidateSet(
-        'PostInstall',
-        'Base',
-        'MidUser',
-        'PowerUser',
-        'DevTools',
-        'PrivacySuite',
-        'MonitoringBenchmark',
-        'Dependencies',
-        'MultimediaStreaming',
-        'FileTransferImaging',
-        'NotesWriting',
-        'UtilitiesOther',
-        'OnHold'
-    )]
-    [string]
-    $Category,
-
-    [ValidateSet(
-        'PostInstall',
-        'Base',
-        'MidUser',
-        'PowerUser',
-        'DevTools',
-        'PrivacySuite',
-        'MonitoringBenchmark',
-        'Dependencies',
-        'MultimediaStreaming',
-        'FileTransferImaging',
-        'NotesWriting',
-        'UtilitiesOther',
-        'OnHold'
-    )]
     [string[]]
     $Categories,
-
     [switch]
-    $All
+    $All,
+    [int]
+    $MaxParallel = 4,
+    [switch]
+    $Update
 )
 
-function Install-WinGetPackages {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [string[]]
-        $PackageIds
-    )
-
-    $uniqueIds = $PackageIds | Where-Object { $_ -and $_.Trim() -ne '' } | Select-Object -Unique
-
-    foreach ($id in $uniqueIds) {
-        Write-Host "Installing $id ..." -ForegroundColor Cyan
-        winget install --id $id --exact --accept-source-agreements --accept-package-agreements --silent --disable-interactivity
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Installation reported a non-zero exit code for $id ($LASTEXITCODE). Continuing..."
-        }
-    }
-}
-
-function Install-PostInstall {
-    Install-WinGetPackages @(
+$CategoryMap = @{
+    'PostInstall' = @(
         'IObit.DriverBooster'
     )
-}
-
-function Install-Base {
-    Install-WinGetPackages @(
+    'Base' = @(
         'Nilesoft.Shell',
         'Giorgiotani.Peazip',
         'DuongDieuPhap.ImageGlass',
         'Starpine.Screenbox'
     )
-}
-
-function Install-MidUser {
-    Install-WinGetPackages @(
+    'MidUser' = @(
         'Bopsoft.Listary',
         'PDFgear.PDFgear',
         'AntibodySoftware.WizTree',
@@ -84,48 +29,15 @@ function Install-MidUser {
         'Klocman.BulkCrapUninstaller',
         'flux.flux'
     )
-}
-
-function Install-PowerUser {
-    Install-WinGetPackages @(
+    'PowerUser' = @(
         'Microsoft.PowerToys',
         'ShareX.ShareX',
         'Espanso.Espanso',
         'AutoHotkey.AutoHotkey',
         'QL-Win.QuickLook',
         'hluk.CopyQ'
-        # Macrorit Partition Master free is provided as a direct download in the markdown list.
-        # It is not installed here since it's not a Winget ID.
     )
-
-    try {
-        Write-Host "Fetching Macrorit Partition Master Free zip..." -ForegroundColor Cyan
-        $tempRoot = Join-Path $env:TEMP ("mde-" + [System.Guid]::NewGuid().ToString('N'))
-        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-        $zipPath = Join-Path $tempRoot 'mde-free-setup.zip'
-        $extractPath = Join-Path $tempRoot 'extracted'
-
-        $uri = 'https://disk-tool.com/download/mde/mde-free-setup.zip'
-        Invoke-WebRequest -Uri $uri -OutFile $zipPath -UseBasicParsing
-
-        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-
-        $desktop = [Environment]::GetFolderPath('Desktop')
-        if (-not (Test-Path -Path $desktop)) {
-            $desktop = Join-Path $env:USERPROFILE 'Desktop'
-        }
-
-        Write-Host "Moving extracted files to Desktop: $desktop" -ForegroundColor Cyan
-        Get-ChildItem -Path $extractPath -Force | ForEach-Object {
-            Move-Item -Path $_.FullName -Destination $desktop -Force -ErrorAction Continue
-        }
-    } catch {
-        Write-Warning "Failed to fetch or extract Macrorit Partition Master zip: $($_.Exception.Message)"
-    }
-}
-
-function Install-DevTools {
-    Install-WinGetPackages @(
+    'DevTools' = @(
         'GitHub.GitHubDesktop',
         'PostgreSQL.pgAdmin',
         'Anysphere.Cursor',
@@ -140,10 +52,7 @@ function Install-DevTools {
         'junegunn.fzf',
         'BurntSushi.ripgrep.MSVC'
     )
-}
-
-function Install-PrivacySuite {
-    Install-WinGetPackages @(
+    'PrivacySuite' = @(
         'Proton.ProtonDrive',
         'IDRIX.VeraCrypt',
         'Proton.ProtonPass',
@@ -153,10 +62,7 @@ function Install-PrivacySuite {
         'OpenWhisperSystems.Signal',
         'Cryptomator.Cryptomator'
     )
-}
-
-function Install-MonitoringBenchmark {
-    Install-WinGetPackages @(
+    'MonitoringBenchmark' = @(
         'REALiX.HWiNFO',
         'CrystalDewWorld.CrystalDiskInfo',
         'CrystalDewWorld.CrystalDiskMark',
@@ -164,10 +70,7 @@ function Install-MonitoringBenchmark {
         'Resplendence.WhoCrashed',
         'Famatech.AdvancedIPScanner'
     )
-}
-
-function Install-Dependencies {
-    Install-WinGetPackages @(
+    'Dependencies' = @(
         'Microsoft.VCRedist.All',
         'Microsoft.DotNet.DesktopRuntime.6',
         'Microsoft.DotNet.DesktopRuntime.8',
@@ -175,93 +78,86 @@ function Install-Dependencies {
         'Microsoft.DotNet.Runtime.8',
         'Microsoft.DotNet.Runtime.9'
     )
-}
-
-function Install-MultimediaStreaming {
-    Install-WinGetPackages @(
+    'MultimediaStreaming' = @(
         'Stremio.Stremio.Beta',
         'flux.flux'
     )
-}
-
-function Install-FileTransferImaging {
-    Install-WinGetPackages @(
+    'FileTransferImaging' = @(
         'Google.QuickShare',
         'LocalSend.LocalSend'
     )
-}
-
-function Install-NotesWriting {
-    Install-WinGetPackages @(
+    'NotesWriting' = @(
         'Obsidian.Obsidian'
     )
-}
-
-function Install-UtilitiesOther {
-    Install-WinGetPackages @(
+    'UtilitiesOther' = @(
         'Nlitesoft.NTLite',
         'BillStewart.SyncthingWindowsSetup',
         'Balena.Etcher'
     )
-}
-
-function Install-OnHold {
-    Install-WinGetPackages @(
+    'OnHold' = @(
         'BlastApps.FluentSearch',
         'Ablaze.Floorp'
     )
 }
 
-function Install-WinGetCategory {
-    [CmdletBinding()]
+function Install-WinGetPackage {
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet(
-            'PostInstall',
-            'Base',
-            'MidUser',
-            'PowerUser',
-            'DevTools',
-            'PrivacySuite',
-            'MonitoringBenchmark',
-            'Dependencies',
-            'MultimediaStreaming',
-            'FileTransferImaging',
-            'NotesWriting',
-            'UtilitiesOther',
-            'OnHold'
-        )]
-        [string[]]
-        $Name
+        [string]
+        $Id,
+        [switch]
+        $Update
     )
-
-    foreach ($n in $Name) {
-        & "Install-$n"
+    $commonArgs = @('--id', $Id, '--exact', '--source', 'winget', '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity', '--silent')
+    if ($Update) {
+        winget upgrade @commonArgs
+    } else {
+        winget install @commonArgs
     }
 }
 
-# Back-compat alias keeping the old function name available to callers
-Set-Alias -Name Install-Category -Value Install-WinGetCategory -Scope Local -Force
-
-if ($PSBoundParameters.ContainsKey('All') -and $All.IsPresent) {
-    Install-Base
-    Install-Dependencies
-    Install-MidUser
-    Install-PowerUser
-    Install-DevTools
-    Install-PrivacySuite
-    Install-MonitoringBenchmark
-    Install-MultimediaStreaming
-    Install-FileTransferImaging
-    Install-NotesWriting
-    Install-UtilitiesOther
-    return
+function Invoke-Category {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]
+        $Name,
+        [switch]
+        $Update,
+        [int]
+        $MaxParallel = 4
+    )
+    if (-not $CategoryMap.ContainsKey($Name)) { throw "Unknown category '$Name'" }
+    $ids = $CategoryMap[$Name]
+    $ids | ForEach-Object -Parallel {
+        param($using:Update)
+        Install-WinGetPackage -Id $_ -Update:$using:Update
+    } -ThrottleLimit $MaxParallel
 }
 
-if ($PSBoundParameters.ContainsKey('Categories') -and $Categories) {
-    Install-WinGetCategory -Name $Categories
-} elseif ($PSBoundParameters.ContainsKey('Category') -and $Category) {
-    Install-WinGetCategory -Name $Category
+# Per-category convenience functions so you can call PostInstall, Base, etc. directly
+function PostInstall { Invoke-Category -Name 'PostInstall' -MaxParallel 4 }
+function Base { Invoke-Category -Name 'Base' -MaxParallel 4 }
+function MidUser { Invoke-Category -Name 'MidUser' -MaxParallel 4 }
+function PowerUser { Invoke-Category -Name 'PowerUser' -MaxParallel 4 }
+function DevTools { Invoke-Category -Name 'DevTools' -MaxParallel 4 }
+function PrivacySuite { Invoke-Category -Name 'PrivacySuite' -MaxParallel 4 }
+function MonitoringBenchmark { Invoke-Category -Name 'MonitoringBenchmark' -MaxParallel 4 }
+function Dependencies { Invoke-Category -Name 'Dependencies' -MaxParallel 4 }
+function MultimediaStreaming { Invoke-Category -Name 'MultimediaStreaming' -MaxParallel 4 }
+function FileTransferImaging { Invoke-Category -Name 'FileTransferImaging' -MaxParallel 4 }
+function NotesWriting { Invoke-Category -Name 'NotesWriting' -MaxParallel 4 }
+function UtilitiesOther { Invoke-Category -Name 'UtilitiesOther' -MaxParallel 4 }
+function OnHold { Invoke-Category -Name 'OnHold' -MaxParallel 4 }
+
+# If script is invoked directly with parameters (from menu), dispatch accordingly
+if ($PSBoundParameters.Count -gt 0) {
+    $selected = @()
+    if ($All) {
+        $selected = @($CategoryMap.Keys | Sort-Object)
+    } elseif ($Categories -and $Categories.Count -gt 0) {
+        $selected = $Categories
+    }
+    foreach ($c in $selected) {
+        Invoke-Category -Name $c -Update:$Update -MaxParallel $MaxParallel
+    }
 }
-
-

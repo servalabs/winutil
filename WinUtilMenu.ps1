@@ -1,5 +1,14 @@
 $ErrorActionPreference = 'Stop'
 
+${script:RemoteHostsBaseUrl} = 'https://raw.githubusercontent.com/servalabs/winutil/refs/heads/main/hosts/'
+${script:RemoteHostsNames} = @(
+    'adobe',
+    'autodesk',
+    'corel',
+    'glasswire',
+    'lightburn'
+)
+
 function Assert-IsAdmin {
     $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
@@ -53,10 +62,11 @@ function Parse-MultiSelection {
 function Show-MainMenu {
     Clear-Host
     Write-Host '=== Windows Utility Menu ===' -ForegroundColor Cyan
-    Write-Host '1) Install Apps'
-    Write-Host '2) Network Blocklists (hosts)'
-    Write-Host '3) Clean Windows (Disk Cleanup)'
-    Write-Host '4) Improve Privacy (O&O ShutUp10)'
+    Write-Host '1) Activate Windows / Microsoft Office'
+    Write-Host '2) Install Apps'
+    Write-Host '3) Network Blocklists (hosts)'
+    Write-Host '4) Clean Windows (Disk Cleanup)'
+    Write-Host '5) Improve Privacy (O&O ShutUp10)'
     Write-Host '0) Exit'
 }
 
@@ -91,7 +101,19 @@ function Invoke-AppInstallsSubmenu {
         $raw = Read-Host
         if ($raw -eq '0') { return }
         if ($raw -match '^[Aa]$') {
-            & (Join-Path $PSScriptRoot 'AppInstalls.ps1') -All
+            # Ask whether to Install or Update and optional MaxParallel
+            $mode = $null
+            while ($null -eq $mode) {
+                Write-Host 'Choose mode: 1) Install  2) Update existing' -ForegroundColor Cyan
+                $m = Read-Host
+                if ($m -eq '1') { $mode = 'Install' }
+                elseif ($m -eq '2') { $mode = 'Update' }
+            }
+            $maxp = Read-Host 'Max parallel processes (default 4):'
+            $paramList = @('-All')
+            if ($maxp -and [int]::TryParse($maxp, [ref]$null)) { $paramList += @('-MaxParallel', [int]$maxp) }
+            if ($mode -eq 'Update') { $paramList += '-Update' }
+            & (Join-Path $PSScriptRoot 'AppInstalls.ps1') @paramList
         } else {
             $sel = Parse-MultiSelection -Input $raw -Max ($i - 1)
             if (-not $sel -or $sel.Count -eq 0) {
@@ -100,7 +122,19 @@ function Invoke-AppInstallsSubmenu {
             }
             $chosen = @()
             foreach ($idx in $sel) { $chosen += $categories[$idx - 1] }
-            & (Join-Path $PSScriptRoot 'AppInstalls.ps1') -Categories $chosen
+            # Ask whether to Install or Update and optional MaxParallel
+            $mode = $null
+            while ($null -eq $mode) {
+                Write-Host 'Choose mode: 1) Install  2) Update existing' -ForegroundColor Cyan
+                $m = Read-Host
+                if ($m -eq '1') { $mode = 'Install' }
+                elseif ($m -eq '2') { $mode = 'Update' }
+            }
+            $maxp = Read-Host 'Max parallel processes (default 4):'
+            $paramList = @('-Categories', $chosen)
+            if ($maxp -and [int]::TryParse($maxp, [ref]$null)) { $paramList += @('-MaxParallel', [int]$maxp) }
+            if ($mode -eq 'Update') { $paramList += '-Update' }
+            & (Join-Path $PSScriptRoot 'AppInstalls.ps1') @paramList
         }
         Write-Host 'Done. Press Enter to continue...'
         [void][System.Console]::ReadLine()
@@ -109,8 +143,29 @@ function Invoke-AppInstallsSubmenu {
 
 function Get-HostsBlocklistFiles {
     $dir = Join-Path $PSScriptRoot 'hosts'
-    if (-not (Test-Path $dir)) { return @() }
-    Get-ChildItem -Path $dir -File | Sort-Object Name
+    $local = @()
+    if (Test-Path $dir) {
+        $local = Get-ChildItem -Path $dir -File | Sort-Object Name
+    }
+
+    # Compose combined set: prefer local files; include remote names not present locally
+    $localNames = @{}
+    foreach ($f in $local) { $localNames[$f.BaseName] = $true }
+    $combined = New-Object System.Collections.Generic.List[object]
+    foreach ($f in $local) { [void]$combined.Add($f) }
+    foreach ($name in ${script:RemoteHostsNames}) {
+        if (-not $localNames.ContainsKey($name)) {
+            # represent remote-only item with a PSCustomObject carrying Name/BaseName and a marker
+            $obj = [pscustomobject]@{
+                Name     = $name
+                BaseName = $name
+                FullName = $null
+                IsRemote = $true
+            }
+            [void]$combined.Add($obj)
+        }
+    }
+    return ,($combined | Sort-Object Name)
 }
 
 function Apply-HostsBlocklists {
@@ -124,7 +179,11 @@ function Apply-HostsBlocklists {
     Clear-Host
     Write-Host '=== Apply Network Blocklists ===' -ForegroundColor Cyan
     for ($i = 0; $i -lt $files.Count; $i++) {
-        Write-Host ("{0}) {1}" -f ($i+1), $files[$i].Name)
+        $label = $files[$i].Name
+        if ($files[$i].PSObject.Properties.Match('IsRemote').Count -gt 0 -and $files[$i].IsRemote) {
+            $label = "$label (remote)"
+        }
+        Write-Host ("{0}) {1}" -f ($i+1), $label)
     }
     Write-Host 'A) Apply ALL'
     Write-Host '0) Back'
@@ -161,9 +220,25 @@ function Apply-HostsBlocklists {
     [void]$merged.AppendLine()
     [void]$merged.AppendLine('# ----- BEGIN winutil blocklists -----')
     foreach ($f in $selectedFiles) {
-        [void]$merged.AppendLine("# from hosts/" + $f.Name)
-        $content = Get-Content -Path $f.FullName -Raw
-        [void]$merged.AppendLine($content.TrimEnd())
+        $isRemote = $false
+        if ($f.PSObject.Properties.Match('IsRemote').Count -gt 0) { $isRemote = [bool]$f.IsRemote }
+        $sourceTag = if ($isRemote) { "# from ${script:RemoteHostsBaseUrl}$($f.Name)" } else { "# from hosts/" + $f.Name }
+        [void]$merged.AppendLine($sourceTag)
+
+        $content = $null
+        if ($isRemote) {
+            try {
+                $url = "${script:RemoteHostsBaseUrl}$($f.Name)"
+                $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -Method GET -TimeoutSec 30
+                $content = $resp.Content
+            } catch {
+                $content = "# Failed to fetch remote blocklist: $($f.Name)"
+            }
+        } else {
+            $content = Get-Content -Path $f.FullName -Raw
+        }
+
+        if ($content) { [void]$merged.AppendLine(($content.TrimEnd())) }
         [void]$merged.AppendLine()
     }
     [void]$merged.AppendLine('# ----- END winutil blocklists -----')
@@ -228,35 +303,59 @@ function Invoke-PrivacyImprovements {
         return
     }
 
-    Write-Host 'O&O ShutUp10 not found. Attempting installation via winget...' -ForegroundColor Cyan
+    Write-Host 'O&O ShutUp10 not found. Downloading and launching (no install)...' -ForegroundColor Cyan
     try {
-        winget install --id OandO.ShutUp10 --exact --accept-source-agreements --accept-package-agreements --silent --disable-interactivity
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "winget exit code: $LASTEXITCODE" -ForegroundColor Yellow
+        $dest = Join-Path $env:TEMP ('OOSU10-' + [System.Guid]::NewGuid().ToString('N') + '.exe')
+        Invoke-WebRequest -Uri 'https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe' -OutFile $dest -UseBasicParsing
+        if (Test-Path $dest) {
+            try { Start-Process -FilePath $dest -Verb RunAs } catch {}
+            return
         }
     } catch {
-        Write-Host "winget installation failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "Failed to download ShutUp10: $($_.Exception.Message)" -ForegroundColor Yellow
     }
+}
 
-    $exe = $candidatePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if ($exe) {
-        try { Start-Process -FilePath $exe -Verb RunAs } catch {}
-    } else {
-        Write-Host 'Please install O&O ShutUp10 manually from https://www.oo-software.com/en/shutup10' -ForegroundColor Yellow
+function Invoke-ActivationMenu {
+    while ($true) {
+        Clear-Host
+        Write-Host '=== Activation ===' -ForegroundColor Cyan
+        Write-Host '1) Run activation script (Windows / Office)'
+        Write-Host '2) Open Windows Activation settings'
+        Write-Host '0) Back'
+        $sel = Read-MenuSelection -Min 0 -Max 2
+        switch ($sel) {
+            1 {
+                try {
+                    Write-Host 'Running activation script...' -ForegroundColor Cyan
+                    Invoke-Expression (curl.exe -s --doh-url https://1.1.1.1/dns-query https://get.activated.win | Out-String)
+                } catch {
+                    Write-Host "Activation script failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+            2 {
+                try { Start-Process 'ms-settings:activation' } catch { Write-Host 'Failed to open Settings.' -ForegroundColor Yellow }
+            }
+            0 { return }
+        }
+        Write-Host 'Press Enter to continue...'
+        [void][System.Console]::ReadLine()
     }
 }
 
 while ($true) {
     Show-MainMenu
-    $choice = Read-MenuSelection -Min 0 -Max 4
+    $choice = Read-MenuSelection -Min 0 -Max 5
+    $shouldPause = $true
     switch ($choice) {
-        1 { Invoke-AppInstallsSubmenu }
-        2 { Invoke-HostsMenu }
-        3 { Invoke-CleanWindows }
-        4 { Invoke-PrivacyImprovements }
-        0 { break }
+        1 { Invoke-ActivationMenu; $shouldPause = $false }
+        2 { Invoke-AppInstallsSubmenu; $shouldPause = $false }
+        3 { Invoke-HostsMenu; $shouldPause = $false }
+        4 { Invoke-CleanWindows }
+        5 { Invoke-PrivacyImprovements }
+        0 { return }
     }
-    if ($choice -ne 0) {
+    if ($choice -ne 0 -and $shouldPause) {
         Write-Host 'Press Enter to return to main menu...'
         [void][System.Console]::ReadLine()
     }
