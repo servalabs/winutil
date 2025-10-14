@@ -75,25 +75,28 @@ function Show-MainMenu {
     Write-Host '0) Exit'
 }
 
+function Get-PreferredPowerShellExe {
+    # Prefer pwsh if available, otherwise fall back to Windows PowerShell
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh -and $pwsh.CommandType -in @('Application','ExternalScript')) {
+        return $pwsh.Source
+    }
+    $ps = Get-Command powershell -ErrorAction SilentlyContinue
+    if ($ps) { return $ps.Source }
+    return 'powershell'
+}
+
 function Invoke-AppInstallsSubmenu {
     Assert-IsAdmin
+    $categories = @('base', 'bench-mon', 'depend', 'dev', 'mid', 'misc', 'power', 'privacy')
     while ($true) {
         Clear-Host
         Write-Host '=== Install Apps ===' -ForegroundColor Cyan
         Write-Host 'U) Upgrade ALL installed apps'
-        $appsDir = Join-Path $PSScriptRoot 'apps'
-        $categories = @()
-        if (Test-Path $appsDir) {
-            $categories = Get-ChildItem -Path $appsDir -File | Sort-Object Name | Select-Object -ExpandProperty Name
-        }
-        $i = 1
-        foreach ($c in $categories) {
-            Write-Host ("{0}) {1}" -f $i, $c)
-            $i++
-        }
+        for ($i = 0; $i -lt $categories.Count; $i++) { Write-Host ("{0}) {1}" -f ($i + 1), $categories[$i]) }
         Write-Host 'A) Run ALL categories'
         Write-Host '0) Back'
-        Write-Host -NoNewline 'Enter number(s) comma-separated, A for all, U to upgrade all, or 0 to back: '
+        Write-Host -NoNewline 'Enter a number, A for all, U to upgrade all, or 0 to back: '
         $raw = Read-Host
         if ($raw -eq '0') { return }
         if ($raw -match '^[Uu]$') {
@@ -103,49 +106,29 @@ function Invoke-AppInstallsSubmenu {
             continue
         }
 
-        $selectedCats = @()
+        $toRun = @()
         if ($raw -match '^[Aa]$') {
-            $selectedCats = $categories
-        } else {
-            $raw = if ($raw) { $raw.Trim() } else { '' }
-            if ([string]::IsNullOrWhiteSpace($raw)) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; continue }
-            $sel = Parse-MultiSelection -Input $raw -Max ($categories.Count)
-            if (-not $sel -or $sel.Count -eq 0) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; continue }
-            foreach ($idx in $sel) { $selectedCats += $categories[$idx - 1] }
+            $toRun = $categories
+        } elseif ([int]::TryParse(($raw ?? '').Trim(), [ref]$null)) {
+            $idx = [int]$raw
+            if ($idx -ge 1 -and $idx -le $categories.Count) { $toRun = @($categories[$idx - 1]) }
         }
 
-        $mode = $null
-        while ($null -eq $mode) {
-            Write-Host 'Choose mode: 1) Install  2) Update existing [Enter=Install]' -ForegroundColor Cyan
-            $m = Read-Host
-            if ([string]::IsNullOrWhiteSpace($m) -or $m -eq '1') { $mode = 'Install' }
-            elseif ($m -eq '2') { $mode = 'Update' }
-        }
+        if (-not $toRun -or $toRun.Count -eq 0) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; Start-Sleep -Milliseconds 800; continue }
 
-        foreach ($cat in $selectedCats) {
-            Write-Host ("[{0}] {1}" -f $mode, $cat) -ForegroundColor Green
-            $url = "${script:RemoteAppsBaseUrl}$cat"
+        $psExe = Get-PreferredPowerShellExe
+        foreach ($cat in $toRun) {
+            $url = "https://raw.githubusercontent.com/servalabs/winutil/refs/heads/main/apps/$cat"
+            $command = "Invoke-Expression (Invoke-RestMethod -Uri '$url')"
             try {
-                $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -Method GET -TimeoutSec 30
-                $scriptText = $resp.Content
-                if ([string]::IsNullOrWhiteSpace($scriptText)) { Write-Host "Empty script for '$cat'" -ForegroundColor Yellow; continue }
-                $lines = $scriptText -split "`r?`n"
-                foreach ($line in $lines) {
-                    $cmd = if ($line) { $line.Trim() } else { '' }
-                    if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
-                    if ($cmd.StartsWith('#')) { continue }
-                    if ($mode -eq 'Update') {
-                        $cmd = [System.Text.RegularExpressions.Regex]::Replace($cmd, '^[\t ]*winget\s+install\b', 'winget upgrade', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-                    }
-                    Write-Host ">> $cmd" -ForegroundColor DarkGray
-                    try { Invoke-Expression $cmd } catch { Write-Host "Command failed: $cmd" -ForegroundColor Yellow }
-                }
+                Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-Command',$command) -Verb RunAs | Out-Null
+                Write-Host ("Opened {0} installer in a new elevated window." -f $cat) -ForegroundColor Green
             } catch {
-                Write-Host ("Failed to fetch/execute '{0}' from {1}: {2}" -f $cat, $url, $_.Exception.Message) -ForegroundColor Yellow
+                Write-Host ("Failed to open '{0}' script from {1}: {2}" -f $cat, $url, $_.Exception.Message) -ForegroundColor Red
             }
         }
 
-        Write-Host 'Done. Press Enter to continue...'
+        Write-Host 'Press Enter to continue...'
         [void][System.Console]::ReadLine()
     }
 }
