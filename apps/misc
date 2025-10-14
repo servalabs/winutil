@@ -1,8 +1,0 @@
-winget install --id Google.QuickShare --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id LocalSend.LocalSend --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Obsidian.Obsidian --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Nlitesoft.NTLite --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id BillStewart.SyncthingWindowsSetup --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Balena.Etcher --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id BlastApps.FluentSearch --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Ablaze.Floorp --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent

@@ -1,6 +1,0 @@
-winget install --id REALiX.HWiNFO --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id CrystalDewWorld.CrystalDiskInfo --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id CrystalDewWorld.CrystalDiskMark --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id WinsiderSS.SystemInformer --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Resplendence.WhoCrashed --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Famatech.AdvancedIPScanner --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent

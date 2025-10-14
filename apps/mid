@@ -1,8 +1,0 @@
-winget install --id Bopsoft.Listary --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id PDFgear.PDFgear --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id AntibodySoftware.WizTree --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id CodeSector.TeraCopy --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Vivaldi.Vivaldi --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id SoftDeluxe.FreeDownloadManager --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id Klocman.BulkCrapUninstaller --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
-winget install --id flux.flux --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent        

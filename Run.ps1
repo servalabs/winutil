@@ -9,8 +9,8 @@ ${script:RemoteHostsNames} = @(
     'lightburn'
 )
 
-# Remote source for app categories (apps/<categoryName>)
-${script:RemoteAppsBaseUrl} = 'https://raw.githubusercontent.com/servalabs/winutil/refs/heads/main/apps/'
+# Remote source for unified app manifest (apps.json at repo root)
+${script:RemoteAppsBaseUrl} = 'https://raw.githubusercontent.com/servalabs/winutil/refs/heads/main/'
 
 function Assert-IsAdmin {
     $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -50,7 +50,8 @@ function Parse-MultiSelection {
         $Max
     )
     $indices = New-Object System.Collections.Generic.List[int]
-    $parts = $Input -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+    # Accept comma, semicolon, or whitespace separated values
+    $parts = $Input -split '[,;\s]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
     foreach ($p in $parts) {
         if ([int]::TryParse($p, [ref]$null)) {
             $n = [int]$p
@@ -109,27 +110,126 @@ function Invoke-AppInstallsSubmenu {
         $toRun = @()
         if ($raw -match '^[Aa]$') {
             $toRun = $categories
-        } elseif ([int]::TryParse(($raw ?? '').Trim(), [ref]$null)) {
-            $idx = [int]$raw
-            if ($idx -ge 1 -and $idx -le $categories.Count) { $toRun = @($categories[$idx - 1]) }
+        } else {
+            $rawTrim = if ($raw) { $raw.Trim() } else { '' }
+            $indices = Parse-MultiSelection -Input $rawTrim -Max $categories.Count
+            if ($indices -and $indices.Count -gt 0) {
+                foreach ($n in $indices) { $toRun += $categories[$n - 1] }
+            }
         }
 
         if (-not $toRun -or $toRun.Count -eq 0) { Write-Host 'Invalid selection.' -ForegroundColor Yellow; Start-Sleep -Milliseconds 800; continue }
 
-        $psExe = Get-PreferredPowerShellExe
         foreach ($cat in $toRun) {
-            $url = "https://raw.githubusercontent.com/servalabs/winutil/refs/heads/main/apps/$cat"
-            $command = "Invoke-Expression (Invoke-RestMethod -Uri '$url')"
-            try {
-                Start-Process -FilePath $psExe -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-Command',$command) -Verb RunAs | Out-Null
-                Write-Host ("Opened {0} installer in a new elevated window." -f $cat) -ForegroundColor Green
-            } catch {
-                Write-Host ("Failed to open '{0}' script from {1}: {2}" -f $cat, $url, $_.Exception.Message) -ForegroundColor Red
+            $manifest = Get-AppManifest -Category $cat
+            if (-not $manifest -or $manifest.Count -eq 0) {
+                Write-Host ("No JSON manifest found for '{0}'. Skipping." -f $cat) -ForegroundColor Yellow
+                continue
             }
+            Install-AppsFromManifest -Category $cat -Apps $manifest
         }
 
         Write-Host 'Press Enter to continue...'
         [void][System.Console]::ReadLine()
+    }
+}
+
+# Load unified JSON app manifest (apps.json at repo root), return entire set
+function Get-AllAppsManifest {
+    $localPath = Join-Path $PSScriptRoot 'apps.json'
+    if (Test-Path $localPath) {
+        try {
+            $content = Get-Content -Path $localPath -Raw -ErrorAction Stop
+            $data = $null
+            try { $data = $content | ConvertFrom-Json -ErrorAction Stop } catch { $data = $null }
+            if ($data) { return ,$data }
+        } catch {}
+    }
+    try {
+        $url = "${script:RemoteAppsBaseUrl}apps.json"
+        $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -Method GET -TimeoutSec 30
+        if ($resp -and $resp.Content) {
+            $data = $resp.Content | ConvertFrom-Json -ErrorAction Stop
+            return ,$data
+        }
+    } catch {}
+    return @()
+}
+
+# Get apps for a specific category from the unified manifest
+function Get-AppManifest {
+    param(
+        [Parameter(Mandatory = $true)] [string] $Category
+    )
+    $all = Get-AllAppsManifest
+    if (-not $all -or $all.Count -eq 0) {
+        Write-Host "No apps.json manifest loaded (local or remote)." -ForegroundColor Yellow
+        return @()
+    }
+    $filtered = @($all | Where-Object { $_.category -eq $Category })
+    if (-not $filtered -or $filtered.Count -eq 0) {
+        Write-Host ("No apps found under category '{0}' in apps.json." -f $Category) -ForegroundColor Yellow
+        return @()
+    }
+    return ,$filtered
+}
+
+# Present selection UI and install selected apps via winget
+function Install-AppsFromManifest {
+    param(
+        [Parameter(Mandatory = $true)] [string] $Category,
+        [Parameter(Mandatory = $true)] [object[]] $Apps
+    )
+    $records = $Apps | ForEach-Object {
+        [pscustomobject]@{
+            Name        = $_.name
+            Id          = $_.id
+            Description = $_.description
+        }
+    }
+
+    $selected = $null
+    $ogv = Get-Command Out-GridView -ErrorAction SilentlyContinue
+    if ($ogv) {
+        try {
+            $selected = $records | Out-GridView -Title ("Select apps to install from '{0}' (Ctrl/Shift to multi-select), then OK" -f $Category) -PassThru
+        } catch {}
+    }
+    if (-not $selected) {
+        Write-Host ("Out-GridView not available or canceled. Falling back to console selection for '{0}'." -f $Category) -ForegroundColor Yellow
+        for ($i = 0; $i -lt $records.Count; $i++) {
+            Write-Host ("{0,2}) {1}  -  {2}" -f ($i+1), $records[$i].Name, $records[$i].Description)
+        }
+        Write-Host -NoNewline 'Enter numbers to install (comma/space/semicolon-separated), or press Enter for ALL: '
+        $choice = Read-Host
+        if ([string]::IsNullOrWhiteSpace($choice)) {
+            $selected = $records
+        } else {
+            $indices = @()
+            foreach ($p in ($choice -split '[,;\s]+')) {
+                $pt = $p.Trim()
+                if ([int]::TryParse($pt, [ref]$null)) {
+                    $n = [int]$pt
+                    if ($n -ge 1 -and $n -le $records.Count -and -not $indices.Contains($n)) { $indices += $n }
+                }
+            }
+            $selected = @()
+            foreach ($n in $indices) { $selected += $records[$n - 1] }
+        }
+    }
+
+    if (-not $selected -or $selected.Count -eq 0) {
+        Write-Host 'No apps selected. Skipping.' -ForegroundColor Yellow
+        return
+    }
+
+    foreach ($app in $selected) {
+        try {
+            Write-Host ("Installing: {0} ({1})" -f $app.Name, $app.Id) -ForegroundColor Cyan
+            winget install --id $app.Id --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
+        } catch {
+            Write-Host ("Failed to install {0}: {1}" -f $app.Name, $_.Exception.Message) -ForegroundColor Red
+        }
     }
 }
 
@@ -221,6 +321,10 @@ function Apply-HostsBlocklists {
     }
 
     $original = Get-Content -Path $systemHostsPath -Raw -ErrorAction SilentlyContinue
+    if ($original) {
+        $pattern = '(?s)# ----- BEGIN winutil blocklists -----.*?# ----- END winutil blocklists -----\s*'
+        $original = [System.Text.RegularExpressions.Regex]::Replace($original, $pattern, '')
+    }
     $merged = [System.Text.StringBuilder]::new()
     if ($original) { [void]$merged.AppendLine($original.TrimEnd()) }
     [void]$merged.AppendLine()
